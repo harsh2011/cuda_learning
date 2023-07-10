@@ -290,6 +290,26 @@ __global__ void matrixAddKernel(float* matrixA, float* matrixB, float* matrixC, 
     }
 }
 
+__global__ void softmaxKernel(float* input, float* output, int rows, int cols) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < rows && col < cols) {
+        int index = row * cols + col;
+
+        // Compute the exponential of each element
+        float expVal = expf(input[index]);
+
+        // Compute the sum of exponentials for the row
+        float sumExp = 0.0f;
+        for (int i = 0; i < cols; ++i) {
+            sumExp += expf(input[row * cols + i]);
+        }
+
+        // Compute the softmax value for the element
+        output[index] = expVal / sumExp;
+    }
+}
 
 
 
@@ -323,6 +343,24 @@ float* matrixAdd(float* matrixA, float* matrixB, int rows, int cols){
 
     return matrixC;
 }
+
+
+float* softmax(float* input, int rows, int cols){
+    float* matrixC;
+
+    printf(" ROW %d  COLS %d \n",rows, cols);
+
+    cudaMalloc((void **)&matrixC, rows * cols * sizeof(float));
+
+    dim3 blockSize(16, 16);
+    dim3 gridSize((cols + blockSize.x - 1) / blockSize.x, (rows + blockSize.y - 1) / blockSize.y);
+
+    softmaxKernel<<<gridSize, blockSize>>>(input, matrixC, rows, cols);
+
+    return matrixC;
+}
+
+
 
 
 int main() {
@@ -359,6 +397,8 @@ int main() {
 
     matrixC = matrixMul(matrixC, fc3_w.matrix, fc2_b.shape[0], fc2_b.shape[1], fc3_w.shape[0], fc3_w.shape[1]);
     matrixC = matrixAdd(matrixC, fc3_b.matrix, fc3_b.shape[0], fc3_b.shape[1]);
+
+    matrixC = softmax(matrixC, fc3_b.shape[0], fc3_b.shape[1]);
 
     printf("output shape 1: %d, %d", fc3_b.shape[0], fc3_b.shape[1]);
 
