@@ -146,8 +146,15 @@ for w in weights:
     with open("./model/" + str(w[0]) + ".npy", "wb") as f:
         print("shape")
 
-        weights = w[1].T
-        print(weights.shape)
+        if "bias" in w[0]:
+            weights = np.expand_dims(w[1], axis=(0))
+            print(weights.shape)
 
-        weights = np.ascontiguousarray(weights)
-        np.save(f, weights)
+            weights = np.ascontiguousarray(weights)
+            np.save(f, weights)
+        else:
+            weights = w[1].T
+            print(weights.shape)
+
+            weights = np.ascontiguousarray(weights)
+            np.save(f, weights)

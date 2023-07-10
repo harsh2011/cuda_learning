@@ -275,8 +275,53 @@ __global__ void matrixMulKernel(float* matrixA, float* matrixB, float* matrixC, 
         matrixC[row * colsB + col] = sum;
 
         // Print intermediate result
-        printf("Intermediate result at rowsA %d, colsB %d  [%d][%d]: %.5f\n", rowsA, colsB, row, col, sum);
+        // printf("Intermediate result at rowsA %d, colsB %d  [%d][%d]: %.5f\n", rowsA, colsB, row, col, sum);
     }
+}
+
+
+__global__ void matrixAddKernel(float* matrixA, float* matrixB, float* matrixC, int rows, int cols) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < rows && col < cols) {
+        int index = row * cols + col;
+        matrixC[index] = matrixA[index] + matrixB[index];
+    }
+}
+
+
+
+
+float* matrixMul(float* matrixA, float* matrixB, int rowsA, int colsA, int rowsB, int colsB){
+    float* matrixC;
+
+    printf(" ROW A %d  COLS A %d \n",rowsA, colsA);
+    printf(" ROW B %d  COLS B %d \n",rowsB, colsB);
+
+    cudaMalloc((void **)&matrixC, rowsA * colsB * sizeof(float));
+
+    dim3 blockSize(16, 16);
+    dim3 gridSize((colsB + blockSize.x - 1) / blockSize.x, (rowsA + blockSize.y - 1) / blockSize.y);
+
+    matrixMulKernel<<<gridSize, blockSize>>>(matrixA, matrixB, matrixC, rowsA, colsA, colsB);
+
+    return matrixC;
+}
+
+float* matrixAdd(float* matrixA, float* matrixB, int rows, int cols){
+    float* matrixC;
+
+    printf(" ROW %d  COLS %d \n",rows, cols);
+
+    cudaMalloc((void **)&matrixC, rows * cols * sizeof(float));
+
+    dim3 blockSize(16, 16);
+    dim3 gridSize((cols + blockSize.x - 1) / blockSize.x, (rows + blockSize.y - 1) / blockSize.y);
+
+    matrixAddKernel<<<gridSize, blockSize>>>(matrixA, matrixB, matrixC, rows, cols);
+
+    return matrixC;
 }
 
 
@@ -286,10 +331,7 @@ int main() {
 
     // Ensure that NumPy is available
     import_array();
-    printf("111\n");
-    Weights fc1_w = read_weights("./mlp/mnist_mlp/model/fc1.weight.npy", 1);
-    // Weights fc1_w = read_weights("./mlp/mnist_mlp/1.npy", 1);
-    printf("222\n");
+    Weights fc1_w = read_weights("./mlp/mnist_mlp/model/fc1.weight.npy", 0);
     Weights fc2_w = read_weights("./mlp/mnist_mlp/model/fc2.weight.npy", 0);
     Weights fc3_w = read_weights("./mlp/mnist_mlp/model/fc3.weight.npy", 0);
     printf("#############################\n");
@@ -304,38 +346,33 @@ int main() {
     // Finalize the Python interpreter
     Py_Finalize();
 
-    float* C;
-    float* matrixC;
-    int rowsA = image.shape[0];
-    int colsA = image.shape[1];
-    int rowsB = fc1_w.shape[0];
-    int colsB = fc1_w.shape[1];
+    int output_row = 1;
+    int output_col = 10;
 
-    printf(" ROW A %d  COLS A %d \n",rowsA, colsA);
-    printf(" ROW B %d  COLS B %d \n",rowsB, colsB);
-
-    C = (float *)malloc(rowsA * colsB * sizeof(float));
-    cudaMalloc((void **)&matrixC, rowsA * colsB * sizeof(float));
-
-    dim3 blockSize(16, 16);
-    dim3 gridSize((colsB + blockSize.x - 1) / blockSize.x, (rowsA + blockSize.y - 1) / blockSize.y);
-
-    printf("image address %d \n",image.matrix);
-    printf("fc1 address %d \n",fc1_w.matrix);
-    matrixMulKernel<<<gridSize, blockSize>>>(image.matrix, fc1_w.matrix, matrixC, rowsA, colsA, colsB);
+    float* matrixC = nullptr;
     
-    cudaMemcpy(C, matrixC,  rowsA * colsB * sizeof(float), cudaMemcpyDeviceToHost);
+    matrixC = matrixMul(image.matrix, fc1_w.matrix, image.shape[0], image.shape[1], fc1_w.shape[0], fc1_w.shape[1]);
+    matrixC = matrixAdd(matrixC, fc1_b.matrix, fc1_b.shape[0], fc1_b.shape[1]);
 
+    matrixC = matrixMul(matrixC, fc2_w.matrix, fc1_b.shape[0], fc1_b.shape[1], fc2_w.shape[0], fc2_w.shape[1]);
+    matrixC = matrixAdd(matrixC, fc2_b.matrix, fc2_b.shape[0], fc2_b.shape[1]);
 
+    matrixC = matrixMul(matrixC, fc3_w.matrix, fc2_b.shape[0], fc2_b.shape[1], fc3_w.shape[0], fc3_w.shape[1]);
+    matrixC = matrixAdd(matrixC, fc3_b.matrix, fc3_b.shape[0], fc3_b.shape[1]);
+
+    printf("output shape 1: %d, %d", fc3_b.shape[0], fc3_b.shape[1]);
+
+    float* C = (float *)malloc(output_row * output_col * sizeof(float));
+
+    cudaMemcpy(C, matrixC,  output_row * output_col * sizeof(float), cudaMemcpyDeviceToHost);
     cudaDeviceSynchronize();
 
-    printf("rowsA %d\n", rowsA);
-    printf("colsB %d\n", colsB);
-    for (int i = 0; i < rowsA; i++) {
-        for (int j = 0; j < colsB; j++){
-            // if (j < 5 || j > colsB-5){
-                printf("%f ", C[i * rowsA + j]);
-            // }
+    printf("rowsA %d\n", output_row);
+    printf("colsB %d\n", output_col);
+    for (int i = 0; i < output_row; i++) {
+        for (int j = 0; j < output_col; j++){
+            printf("%f ", C[i * output_row + j]);
+            
         }
         printf("\n");
     }
